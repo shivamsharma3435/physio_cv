@@ -34,6 +34,39 @@ EXERCISE_THRESHOLDS: Dict[str, Dict[str, Tuple[float, float, float]]] = {
         "left_elbow":     (180.0, 15.0, 30.0),
         "right_elbow":    (180.0, 15.0, 30.0),
     },
+    "plank": {
+    "left_elbow":     (90.0,  10.0, 20.0),
+    "right_elbow":    (90.0,  10.0, 20.0),
+    "left_hip":       (180.0, 10.0, 20.0),
+    "right_hip":      (180.0, 10.0, 20.0),
+    "left_knee":      (180.0, 10.0, 20.0),
+    "right_knee":     (180.0, 10.0, 20.0),
+    "spine":          (180.0, 8.0,  15.0),
+},
+"front_lunge": {
+    "left_knee":      (90.0,  15.0, 30.0),
+    "right_knee":     (165.0, 15.0, 25.0),   # back leg nearly straight
+    "left_hip":       (90.0,  15.0, 30.0),
+    "right_hip":      (165.0, 15.0, 25.0),
+    "spine":          (180.0, 10.0, 20.0),
+},
+"sitting": {
+    "left_knee":      (90.0,  12.0, 25.0),
+    "right_knee":     (90.0,  12.0, 25.0),
+    "left_hip":       (90.0,  12.0, 25.0),
+    "right_hip":      (90.0,  12.0, 25.0),
+    "spine":          (180.0, 8.0,  18.0),
+},
+"lying": {
+    "left_knee":      (180.0, 10.0, 20.0),
+    "right_knee":     (180.0, 10.0, 20.0),
+    "left_hip":       (180.0, 10.0, 20.0),
+    "right_hip":      (180.0, 10.0, 20.0),
+    "spine":          (180.0, 8.0,  15.0),
+    "left_elbow":     (180.0, 15.0, 30.0),
+    "right_elbow":    (180.0, 15.0, 30.0),
+},
+
     "standing": {
         "left_knee":  (180.0, 8.0, 18.0),
         "right_knee": (180.0, 8.0, 18.0),

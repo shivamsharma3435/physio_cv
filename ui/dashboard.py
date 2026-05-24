@@ -64,7 +64,7 @@ STATUS_COLORS = {
     "bad":  CLR_CORAL,
 }
 
-EXERCISES = ["standing", "squat", "shoulder_raise"]
+EXERCISES = ["standing", "squat", "shoulder_raise", "plank", "front_lunge", "sitting", "lying"]
 
 
 # ── Worker thread ───────────────────────────────────────────────────────────────
@@ -450,7 +450,7 @@ class TherapistDashboard(QMainWindow):
         self.stop_btn.setEnabled(False)
         self.report_btn.setEnabled(True)
         self.status_bar.showMessage(f"Session {session_id} complete — export PDF when ready")
-        self._refresh_session_table()
+        QTimer.singleShot(500, self._refresh_session_table)  # slight delay lets DB commit finish
 
     def _on_error(self, msg: str):
         self.status_bar.showMessage(f"Error: {msg}")
@@ -497,7 +497,12 @@ class TherapistDashboard(QMainWindow):
 
     def _refresh_session_table(self):
         try:
-            logger = SessionLogger()
+            db_path = Path(__file__).resolve().parent.parent / "data" / "sessions.db"
+            if not db_path.exists():
+                self.status_bar.showMessage("No session data found yet")
+                return
+
+            logger = SessionLogger(db_path)
             rows = logger.conn.execute(
                 "SELECT id, patient_id, exercise, avg_score FROM sessions "
                 "ORDER BY id DESC LIMIT 10"
@@ -508,23 +513,45 @@ class TherapistDashboard(QMainWindow):
             for r, (sid, pid, ex, score) in enumerate(rows):
                 self.session_table.setItem(r, 0, QTableWidgetItem(str(sid)))
                 self.session_table.setItem(r, 1, QTableWidgetItem(pid))
-                self.session_table.setItem(r, 2, QTableWidgetItem(ex))
-                score_item = QTableWidgetItem(f"{score:.0f}" if score else "—")
+                self.session_table.setItem(r, 2, QTableWidgetItem(ex.replace("_", " ").title()))
+                score_text = f"{score:.0f}" if score is not None else "—"
+                score_item = QTableWidgetItem(score_text)
                 score_item.setForeground(
                     QColor(CLR_TEAL if (score or 0) >= 80
                            else CLR_AMBER if (score or 0) >= 50
                            else CLR_CORAL)
                 )
                 self.session_table.setItem(r, 3, score_item)
-        except Exception:
-            pass
+
+        except Exception as e:
+            self.status_bar.showMessage(f"Table refresh error: {e}")
 
     # ── PDF export ──────────────────────────────────────────────────────────────
 
+    # def _export_report(self):
+    #     if not self._session_id:
+    #         self.status_bar.showMessage("No completed session to export")
+    #     return
+
+    #     path, _ = QFileDialog.getSaveFileName(
+    #         self, "Save PDF Report", f"report_session_{self._session_id}.pdf",
+    #         "PDF Files (*.pdf)"
+    #     )
+    #     if not path:
+    #         return
+
+    #     try:
+    #         db_path = Path(__file__).resolve().parent.parent / "data" / "sessions.db"
+    #         rg = ReportGenerator(db_path)
+    #         rg.generate(self._session_id, Path(path))
+    #         rg.close()
+    #         self.status_bar.showMessage(f"Report saved: {path}")
+    #     except Exception as e:
+    #         self.status_bar.showMessage(f"Report error: {e}")
     def _export_report(self):
         if not self._session_id:
             self.status_bar.showMessage("No completed session to export")
-            return
+        return
 
         path, _ = QFileDialog.getSaveFileName(
             self, "Save PDF Report", f"report_session_{self._session_id}.pdf",
@@ -534,11 +561,16 @@ class TherapistDashboard(QMainWindow):
             return
 
         try:
-            rg = ReportGenerator()
+            db_path = Path(__file__).resolve().parent.parent / "data" / "sessions.db"
+            print(f"[DEBUG] session_id={self._session_id}")
+            print(f"[DEBUG] db_path={db_path}, exists={db_path.exists()}")
+            rg = ReportGenerator(db_path)
             rg.generate(self._session_id, Path(path))
             rg.close()
             self.status_bar.showMessage(f"Report saved: {path}")
         except Exception as e:
+            import traceback
+            traceback.print_exc()                          # prints full error to terminal
             self.status_bar.showMessage(f"Report error: {e}")
 
     def closeEvent(self, event):

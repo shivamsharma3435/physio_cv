@@ -35,7 +35,7 @@ class SessionRunner:
         self.contour_analyzer = ContourAnalyzer()
         self.pose_estimator = PoseEstimator()
         self.angle_calculator = AngleCalculator()
-        self.feedback_engine  = FeedbackEngine(alert_cooldown_s=3.0)
+        self.feedback_engine  = FeedbackEngine(alert_cooldown_s=10.0)
         self.logger = SessionLogger(db_path or Path("data/sessions.db"))
 
     def run(
