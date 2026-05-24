@@ -73,10 +73,7 @@ class SessionSignals(QObject):
     session_ended = pyqtSignal(int)
     error         = pyqtSignal(str)
 
-
 class SessionWorker(QThread):
-    """Runs SessionRunner in a background thread, emits frames via signals."""
-
     def __init__(self, patient_id: str, exercise: str, camera: int = 0):
         super().__init__()
         self.patient_id = patient_id
@@ -85,6 +82,8 @@ class SessionWorker(QThread):
         self.signals    = SessionSignals()
         self._running   = True
         self._runner: Optional[SessionRunner] = None
+        self.session_id: Optional[int] = None   # ← add this
+        self.pre_session_id: Optional[int] = None 
 
     def run(self):
         try:
@@ -94,20 +93,19 @@ class SessionWorker(QThread):
                 exercise=self.exercise,
                 camera=self.camera,
                 on_frame_callback=self._on_frame,
+                session_id=self.pre_session_id, 
             )
+            self.session_id = session_id          # ← store it
             self.signals.session_ended.emit(session_id)
         except Exception as e:
             self.signals.error.emit(str(e))
 
-    def _on_frame(self, frame: np.ndarray, angles: dict, score: int):
+    def _on_frame(self, frame, angles, score):
         if self._running:
             self.signals.frame_ready.emit(frame.copy(), dict(angles), score)
 
     def stop(self):
         self._running = False
-        if self._runner:
-            # Signal the runner loop to exit by closing its capture
-            pass
 
 
 # ── Joint angle bar widget ──────────────────────────────────────────────────────
@@ -214,6 +212,7 @@ class TherapistDashboard(QMainWindow):
 
         self._worker: Optional[SessionWorker] = None
         self._session_id: Optional[int] = None
+        self._current_session_id: Optional[int] = None
         self._frame_count = 0
         self._session_start: Optional[float] = None
 
@@ -343,35 +342,10 @@ class TherapistDashboard(QMainWindow):
         self.stop_btn.setEnabled(False)
         self.stop_btn.setStyleSheet(self._btn_style(CLR_CORAL, "#fff"))
 
-        self.report_btn = QPushButton("⬇  Export PDF report")
-        self.report_btn.clicked.connect(self._export_report)
-        self.report_btn.setEnabled(False)
-        self.report_btn.setStyleSheet(self._btn_style(CLR_BORDER, CLR_TEXT))
-
         ctrl_layout.addWidget(self.start_btn)
         ctrl_layout.addWidget(self.stop_btn)
-        ctrl_layout.addWidget(self.report_btn)
+        # ctrl_layout.addWidget(self.report_btn)
         right_col.addWidget(ctrl_card)
-
-        # Session log table
-        log_card = self._card("Recent sessions")
-        log_layout = QVBoxLayout(log_card)
-        self.session_table = QTableWidget(0, 4)
-        self.session_table.setHorizontalHeaderLabels(["ID", "Patient", "Exercise", "Score"])
-        self.session_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.session_table.setStyleSheet(f"""
-            QTableWidget {{
-                border: none; font-size: 12px; gridline-color: {CLR_BORDER};
-            }}
-            QHeaderView::section {{
-                background: {CLR_BG}; font-size: 11px;
-                color: {CLR_MUTED}; border: none; padding: 4px;
-            }}
-        """)
-        self.session_table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.session_table.verticalHeader().setVisible(False)
-        log_layout.addWidget(self.session_table)
-        right_col.addWidget(log_card, 1)
 
         root.addLayout(right_col, 2)
 
@@ -413,8 +387,6 @@ class TherapistDashboard(QMainWindow):
             }}
         """
 
-    # ── Session control ─────────────────────────────────────────────────────────
-
     def _start_session(self):
         patient_id = self.patient_input.text().strip() or "Unknown"
         exercise   = EXERCISES[self.exercise_combo.currentIndex()]
@@ -423,7 +395,19 @@ class TherapistDashboard(QMainWindow):
         self._session_start = time.time()
         self._frame_count   = 0
 
+        # Pre-create session in DB so we have the ID immediately
+        try:
+            db_path = Path(__file__).resolve().parent.parent / "data" / "sessions.db"
+            logger = SessionLogger(db_path)
+            self._current_session_id = logger.start_session(patient_id, exercise)
+            logger.close()
+            print(f"[DEBUG] Pre-created session_id={self._current_session_id}")
+        except Exception as e:
+            print(f"[DEBUG] Could not pre-create session: {e}")
+        self._current_session_id = None
+
         self._worker = SessionWorker(patient_id, exercise, camera)
+        self._worker.pre_session_id = self._current_session_id   # ← add this
         self._worker.signals.frame_ready.connect(self._on_frame)
         self._worker.signals.session_ended.connect(self._on_session_ended)
         self._worker.signals.error.connect(self._on_error)
@@ -431,26 +415,40 @@ class TherapistDashboard(QMainWindow):
 
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
-        self.report_btn.setEnabled(False)
+        # self.report_btn.setEnabled(False)
         self.status_bar.showMessage(f"Session running — {exercise} — {patient_id}")
+
 
     def _stop_session(self):
         if self._worker:
             self._worker.stop()
             self._worker.terminate()
+            self._worker.wait()  # wait for thread to fully finish
+
+            # Manually end session since signal may not have fired
+            if self._current_session_id:
+                try:
+                    db_path = Path(__file__).resolve().parent.parent / "data" / "sessions.db"
+                    logger = SessionLogger(db_path)
+                    logger.end_session(self._current_session_id)
+                    logger.close()
+                    self._session_id = self._current_session_id
+                except Exception as e:
+                    print(f"[DEBUG] end_session error: {e}")
+
             self._worker = None
 
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
-        self.status_bar.showMessage("Session stopped")
+        # self.report_btn.setEnabled(True)
+        self.status_bar.showMessage("Session stopped — you can now export the PDF")
 
     def _on_session_ended(self, session_id: int):
         self._session_id = session_id
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
-        self.report_btn.setEnabled(True)
+        # self.report_btn.setEnabled(True)
         self.status_bar.showMessage(f"Session {session_id} complete — export PDF when ready")
-        QTimer.singleShot(500, self._refresh_session_table)  # slight delay lets DB commit finish
 
     def _on_error(self, msg: str):
         self.status_bar.showMessage(f"Error: {msg}")
@@ -492,92 +490,6 @@ class TherapistDashboard(QMainWindow):
             elapsed = int(time.time() - self._session_start)
             m, s = divmod(elapsed, 60)
             self.clock_label.setText(f"{m:02d}:{s:02d}")
-
-    # ── Session table ───────────────────────────────────────────────────────────
-
-    def _refresh_session_table(self):
-        try:
-            db_path = Path(__file__).resolve().parent.parent / "data" / "sessions.db"
-            if not db_path.exists():
-                self.status_bar.showMessage("No session data found yet")
-                return
-
-            logger = SessionLogger(db_path)
-            rows = logger.conn.execute(
-                "SELECT id, patient_id, exercise, avg_score FROM sessions "
-                "ORDER BY id DESC LIMIT 10"
-            ).fetchall()
-            logger.close()
-
-            self.session_table.setRowCount(len(rows))
-            for r, (sid, pid, ex, score) in enumerate(rows):
-                self.session_table.setItem(r, 0, QTableWidgetItem(str(sid)))
-                self.session_table.setItem(r, 1, QTableWidgetItem(pid))
-                self.session_table.setItem(r, 2, QTableWidgetItem(ex.replace("_", " ").title()))
-                score_text = f"{score:.0f}" if score is not None else "—"
-                score_item = QTableWidgetItem(score_text)
-                score_item.setForeground(
-                    QColor(CLR_TEAL if (score or 0) >= 80
-                           else CLR_AMBER if (score or 0) >= 50
-                           else CLR_CORAL)
-                )
-                self.session_table.setItem(r, 3, score_item)
-
-        except Exception as e:
-            self.status_bar.showMessage(f"Table refresh error: {e}")
-
-    # ── PDF export ──────────────────────────────────────────────────────────────
-
-    # def _export_report(self):
-    #     if not self._session_id:
-    #         self.status_bar.showMessage("No completed session to export")
-    #     return
-
-    #     path, _ = QFileDialog.getSaveFileName(
-    #         self, "Save PDF Report", f"report_session_{self._session_id}.pdf",
-    #         "PDF Files (*.pdf)"
-    #     )
-    #     if not path:
-    #         return
-
-    #     try:
-    #         db_path = Path(__file__).resolve().parent.parent / "data" / "sessions.db"
-    #         rg = ReportGenerator(db_path)
-    #         rg.generate(self._session_id, Path(path))
-    #         rg.close()
-    #         self.status_bar.showMessage(f"Report saved: {path}")
-    #     except Exception as e:
-    #         self.status_bar.showMessage(f"Report error: {e}")
-    def _export_report(self):
-        if not self._session_id:
-            self.status_bar.showMessage("No completed session to export")
-        return
-
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Save PDF Report", f"report_session_{self._session_id}.pdf",
-            "PDF Files (*.pdf)"
-        )
-        if not path:
-            return
-
-        try:
-            db_path = Path(__file__).resolve().parent.parent / "data" / "sessions.db"
-            print(f"[DEBUG] session_id={self._session_id}")
-            print(f"[DEBUG] db_path={db_path}, exists={db_path.exists()}")
-            rg = ReportGenerator(db_path)
-            rg.generate(self._session_id, Path(path))
-            rg.close()
-            self.status_bar.showMessage(f"Report saved: {path}")
-        except Exception as e:
-            import traceback
-            traceback.print_exc()                          # prints full error to terminal
-            self.status_bar.showMessage(f"Report error: {e}")
-
-    def closeEvent(self, event):
-        if self._worker:
-            self._worker.stop()
-            self._worker.terminate()
-        event.accept()
 
 
 # ── Standalone entry ────────────────────────────────────────────────────────────

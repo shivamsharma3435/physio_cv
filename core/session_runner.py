@@ -45,6 +45,7 @@ class SessionRunner:
         camera: int = 0,
         on_frame_callback: Optional[Callable] = None,
         show_debug: bool = False,
+        session_id=None
     ):
         """
         Main loop. Captures from `camera`, processes each frame,
@@ -62,7 +63,13 @@ class SessionRunner:
         if not cap.isOpened():
             raise RuntimeError(f"Cannot open camera/video: {camera}")
 
-        session_id = self.logger.start_session(patient_id, exercise)
+        # Use pre-created session_id if provided, else create new one
+        if session_id is not None:
+            session_id = session_id
+        else:
+            session_id = self.logger.start_session(patient_id, exercise)
+        # session_id = self.logger.start_session(patient_id, exercise)
+        
         print(f"[SessionRunner] Session {session_id} started — {exercise} for {patient_id}")
 
         frame_count = 0
